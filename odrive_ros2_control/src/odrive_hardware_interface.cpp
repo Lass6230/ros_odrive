@@ -45,9 +45,9 @@ private:
 };
 
 struct Axis {
-    Axis(SocketCanIntf* can_intf, uint32_t node_id) : can_intf_(can_intf), node_id_(node_id) {}
+    Axis(SocketCanIntf* can_intf, uint32_t node_id, double gearing) : can_intf_(can_intf), node_id_(node_id), gearing_(gearing) {}
 
-    void on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame);
+    void on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame, double gearing);
 
     void on_can_msg();
 
@@ -58,6 +58,8 @@ struct Axis {
     double pos_setpoint_ = 0.0f; // [rad]
     double vel_setpoint_ = 0.0f; // [rad/s]
     double torque_setpoint_ = 0.0f; // [Nm]
+
+    double gearing_ = 1.0; // motor gearing
 
     // State (ODrives => ros2_control)
     // rclcpp::Time encoder_estimates_timestamp_;
@@ -113,7 +115,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
     can_intf_name_ = info_.hardware_parameters["can"];
 
     for (auto& joint : info_.joints) {
-        axes_.emplace_back(&can_intf_, std::stoi(joint.parameters.at("node_id")));
+        axes_.emplace_back(&can_intf_, std::stoi(joint.parameters.at("node_id")),std::stod(joint.parameters.at("gearing")));
     }
 
     return CallbackReturn::SUCCESS;
@@ -285,18 +287,18 @@ return_type ODriveHardwareInterface::write(const rclcpp::Time&, const rclcpp::Du
         // Send the CAN message that fits the set of enabled setpoints
         if (axis.pos_input_enabled_) {
             Set_Input_Pos_msg_t msg;
-            msg.Input_Pos = axis.pos_setpoint_ / (2 * M_PI);
+            msg.Input_Pos = (axis.pos_setpoint_ / (2 * M_PI))/axis.gearing_;
             msg.Vel_FF = axis.vel_input_enabled_ ? (axis.vel_setpoint_  / (2 * M_PI)) : 0.0f;
             msg.Torque_FF = axis.torque_input_enabled_ ? axis.torque_setpoint_ : 0.0f;
             axis.send(msg);
         } else if (axis.vel_input_enabled_) {
             Set_Input_Vel_msg_t msg;
-            msg.Input_Vel = axis.vel_setpoint_ / (2 * M_PI);
+            msg.Input_Vel = (axis.vel_setpoint_ / (2 * M_PI))/axis.gearing_;
             msg.Input_Torque_FF = axis.torque_input_enabled_ ? axis.torque_setpoint_ : 0.0f;
             axis.send(msg);
         } else if (axis.torque_input_enabled_) {
             Set_Input_Torque_msg_t msg;
-            msg.Input_Torque = axis.torque_setpoint_;
+            msg.Input_Torque = axis.torque_setpoint_*axis.gearing_;
             axis.send(msg);
         } else {
             // no control enabled - don't send any setpoint
@@ -309,12 +311,12 @@ return_type ODriveHardwareInterface::write(const rclcpp::Time&, const rclcpp::Du
 void ODriveHardwareInterface::on_can_msg(const can_frame& frame) {
     for (auto& axis : axes_) {
         if ((frame.can_id >> 5) == axis.node_id_) {
-            axis.on_can_msg(timestamp_, frame);
+            axis.on_can_msg(timestamp_, frame,axis.gearing_);
         }
     }
 }
 
-void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame) {
+void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame,double gearing) {
     uint8_t cmd = frame.can_id & 0x1f;
 
     auto try_decode = [&]<typename TMsg>(TMsg& msg) {
@@ -329,14 +331,14 @@ void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame) {
     switch (cmd) {
         case Get_Encoder_Estimates_msg_t::cmd_id: {
             if (Get_Encoder_Estimates_msg_t msg; try_decode(msg)) {
-                pos_estimate_ = msg.Pos_Estimate * (2 * M_PI);
-                vel_estimate_ = msg.Vel_Estimate * (2 * M_PI);
+                pos_estimate_ = msg.Pos_Estimate * (2 * M_PI)*gearing;
+                vel_estimate_ = msg.Vel_Estimate * (2 * M_PI)*gearing;
             }
         } break;
         case Get_Torques_msg_t::cmd_id: {
             if (Get_Torques_msg_t msg; try_decode(msg)) {
-                torque_target_ = msg.Torque_Target;
-                torque_estimate_ = msg.Torque_Estimate;
+                torque_target_ = msg.Torque_Target/gearing;
+                torque_estimate_ = msg.Torque_Estimate/gearing;
             }
         } break;
             // silently ignore unimplemented command IDs
