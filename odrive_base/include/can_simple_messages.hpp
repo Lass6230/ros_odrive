@@ -97,6 +97,48 @@ struct Heartbeat_msg_t final {
     uint8_t Trajectory_Done_Flag = 0;
 };
 
+
+
+struct RXSdo_msg_t final {
+    constexpr RXSdo_msg_t() = default;
+
+#ifdef ODRIVE_CAN_MSG_TYPE
+    RXSdo_msg_t(const TBoard::TCanIntf::TMsg& msg) {
+        decode_msg(msg);
+    }
+
+    void encode_msg(TBoard::TCanIntf::TMsg& msg) {
+        encode_buf(can_msg_get_payload(msg).data());
+    }
+
+    void decode_msg(const TBoard::TCanIntf::TMsg& msg) {
+        decode_buf(can_msg_get_payload(msg).data());
+    }
+#endif
+
+    void encode_buf(uint8_t* buf) const {
+        can_set_signal_raw<uint8_t>(buf,Opcode, 0, 8, true);
+        can_set_signal_raw<uint16_t>(buf,Endpoint_ID, 8, 16, true);
+        can_set_signal_raw<uint8_t>(buf, Reserved,24, 8, true);
+        can_set_signal_raw<uint32_t>(buf, Value,32, 32, true);
+    }
+
+    void decode_buf(const uint8_t* buf) {
+        Opcode = can_get_signal_raw<uint8_t>(buf, 0, 8, true);
+        Endpoint_ID = can_get_signal_raw<uint16_t>(buf, 8, 16, true);
+        Reserved = can_get_signal_raw<uint8_t>(buf, 24, 8, true);
+        Value = can_get_signal_raw<uint32_t>(buf, 32, 32, true);
+    }
+
+    static const uint8_t cmd_id = 0x004;
+    static const uint8_t msg_length = 8;
+    
+    uint8_t Opcode = 0;
+    uint16_t Endpoint_ID = 0;
+    uint8_t Reserved = 0;
+    uint32_t Value = 0;
+};
+
 struct Estop_msg_t final {
     constexpr Estop_msg_t() = default;
 

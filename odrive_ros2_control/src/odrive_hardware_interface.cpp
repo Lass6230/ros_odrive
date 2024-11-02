@@ -7,7 +7,7 @@
 #include "pluginlib/class_list_macros.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "socket_can.hpp"
-
+#include <unistd.h>
 namespace odrive_ros2_control {
 
 class Axis;
@@ -60,7 +60,7 @@ struct Axis {
     double torque_setpoint_ = 0.0f; // [Nm]
 
     double gearing_ = 1.0; // motor gearing
-
+    // uint32_t homing_ = 0;
     // State (ODrives => ros2_control)
     // rclcpp::Time encoder_estimates_timestamp_;
     // uint32_t axis_error_ = 0;
@@ -98,6 +98,14 @@ struct Axis {
 
         can_intf_->send_can_frame(frame);
     }
+    void send_frame(struct can_frame frame) {
+        // struct can_frame frame;
+        // frame.can_id = node_id_ << 5 | msg.cmd_id;
+        // frame.can_dlc = msg.msg_length;
+        // msg.encode_buf(frame.data);
+
+        can_intf_->send_can_frame(frame);
+    }
 };
 
 } // namespace odrive_ros2_control
@@ -122,11 +130,19 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
 }
 
 CallbackReturn ODriveHardwareInterface::on_configure(const State&) {
+    
+
+
     if (!can_intf_.init(can_intf_name_, &event_loop_, std::bind(&ODriveHardwareInterface::on_can_msg, this, _1))) {
         RCLCPP_ERROR(rclcpp::get_logger("ODriveHardwareInterface"), "Failed to initialize SocketCAN on %s", can_intf_name_.c_str());
         return CallbackReturn::ERROR;
     }
+
+
     RCLCPP_INFO(rclcpp::get_logger("ODriveHardwareInterface"), "Initialized SocketCAN on %s", can_intf_name_.c_str());
+
+    
+    
     return CallbackReturn::SUCCESS;
 }
 
@@ -138,6 +154,9 @@ CallbackReturn ODriveHardwareInterface::on_cleanup(const State&) {
 CallbackReturn ODriveHardwareInterface::on_activate(const State&) {
     RCLCPP_INFO(rclcpp::get_logger("ODriveHardwareInterface"), "activating ODrives...");
 
+    
+    
+    
     // This can be called several seconds before the controller finishes starting.
     // Therefore we enable the ODrives only in perform_command_mode_switch().
     return CallbackReturn::SUCCESS;
@@ -147,6 +166,7 @@ CallbackReturn ODriveHardwareInterface::on_deactivate(const State&) {
     RCLCPP_INFO(rclcpp::get_logger("ODriveHardwareInterface"), "deactivating ODrives...");
 
     for (auto& axis : axes_) {
+
         Set_Axis_State_msg_t msg;
         msg.Axis_Requested_State = AXIS_STATE_IDLE;
         axis.send(msg);
@@ -235,12 +255,14 @@ return_type ODriveHardwareInterface::perform_command_mode_switch(
             }
         }
 
+        
         if (mode_switch) {
             Set_Controller_Mode_msg_t msg;
             if (axis.pos_input_enabled_) {
                 RCLCPP_INFO(rclcpp::get_logger("ODriveHardwareInterface"), "Setting %s to position control", info_.joints[i].name.c_str());
                 msg.Control_Mode = CONTROL_MODE_POSITION_CONTROL;
                 msg.Input_Mode = INPUT_MODE_PASSTHROUGH;
+                // msg.Input_Mode = INPUT_MODE_POS_FILTER;
             } else if (axis.vel_input_enabled_) {
                 RCLCPP_INFO(rclcpp::get_logger("ODriveHardwareInterface"), "Setting %s to velocity control", info_.joints[i].name.c_str());
                 msg.Control_Mode = CONTROL_MODE_VELOCITY_CONTROL;
@@ -262,10 +284,70 @@ return_type ODriveHardwareInterface::perform_command_mode_switch(
             msg1.Identify = 0;
             axis.send(msg1);
 
+            
+                // for (auto& axis : axes_) {
+            // if(axis.homing_ == 1){
+            //     RXSdo_msg_t msg3;
+            //         msg3.Opcode = 1;
+            //         msg3.Endpoint_ID = 542;
+            //         msg3.Reserved = 0;
+            //         msg3.Value = 0;
+            //         axis.send(msg3);
+            //     RCLCPP_INFO(rclcpp::get_logger("ODriveHardwareInterface"), "Homing axis %i", axis.node_id_);
+            //     Set_Axis_State_msg_t msg_homing;
+            //     msg_homing.Axis_Requested_State = AXIS_STATE_HOMING;
+            //     RCLCPP_INFO(rclcpp::get_logger("ODriveHardwareInterface"), "Homing axis %i", axis.node_id_);
+            //     axis.send(msg_homing);
+            //     msg3.Opcode = 1;
+            //         msg3.Endpoint_ID = 542;
+            //         msg3.Reserved = 0;
+            //         msg3.Value = 0;
+            //         axis.send(msg3);
+                // sleep(10);
+                // for(int i = 0;i<500;i++){
+                //     // while (can_intf_.read_nonblocking()) {
+                //     // // repeat until CAN interface has no more messages
+                //     // }
+                //     // can_intf_.read_nonblocking();
+                //     // axis.send(msg_homing);
+                //     // struct can_frame frame;
+                //     // frame.can_id = axis.node_id_ << 5 | 0x04;
+                //     // frame.can_dlc = 8;
+                //     // // frame.data[8];
+                //     // frame.data[0] = 0x01;
+                //     // frame.data[1] = 0x02;// 1000011110
+                //     // frame.data[2] = 0x1E;
+                //     // frame.data[3] = 0x00;
+                //     // frame.data[4] = 0x00;
+                //     // frame.data[5] = 0x00;
+                //     // frame.data[6] = 0x00;
+                //     // frame.data[7] = 0x00;
+                //     // axis.send_frame(frame);
+
+                //     // RXSdo_msg_t msg3;
+                //     msg3.Opcode = 1;
+                //     msg3.Endpoint_ID = 542;
+                //     msg3.Reserved = 0;
+                //     msg3.Value = 0;
+                //     axis.send(msg3);
+
+                //     RCLCPP_INFO(rclcpp::get_logger("ODriveHardwareInterface"), "Homing axis %i", axis.node_id_);
+                //     sleep(0.1);
+                // }
+            // }
+    
+    // // }
+    //         Clear_Errors_msg_t msg3;
+    //         msg1.Identify = 0;
+    //         axis.send(msg3);
+
             // Set axis state
             Set_Axis_State_msg_t msg2;
             msg2.Axis_Requested_State = any_enabled ? AXIS_STATE_CLOSED_LOOP_CONTROL : AXIS_STATE_IDLE;
             axis.send(msg2);
+
+            
+
         }
     }
 
