@@ -45,9 +45,9 @@ private:
 };
 
 struct Axis {
-    Axis(SocketCanIntf* can_intf, uint32_t node_id, double gearing) : can_intf_(can_intf), node_id_(node_id), gearing_(gearing) {}
+    Axis(SocketCanIntf* can_intf, uint32_t node_id, double gearing, double offset) : can_intf_(can_intf), node_id_(node_id), gearing_(gearing), offset_(offset) {}
 
-    void on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame, double gearing);
+    void on_can_msg(const rclcpp::Time& timestamp, const can_frame& frame, double gearing, double offset);
 
     void on_can_msg();
 
@@ -60,6 +60,7 @@ struct Axis {
     double torque_setpoint_ = 0.0f; // [Nm]
 
     double gearing_ = 1.0; // motor gearing
+    double offset_ = 0.0;
     // uint32_t homing_ = 0;
     // State (ODrives => ros2_control)
     // rclcpp::Time encoder_estimates_timestamp_;
@@ -123,7 +124,7 @@ CallbackReturn ODriveHardwareInterface::on_init(const hardware_interface::Hardwa
     can_intf_name_ = info_.hardware_parameters["can"];
 
     for (auto& joint : info_.joints) {
-        axes_.emplace_back(&can_intf_, std::stoi(joint.parameters.at("node_id")),std::stod(joint.parameters.at("gearing")));
+        axes_.emplace_back(&can_intf_, std::stoi(joint.parameters.at("node_id")),std::stod(joint.parameters.at("gearing")),std::stod(joint.parameters.at("offset")));
     }
 
     return CallbackReturn::SUCCESS;
@@ -261,8 +262,8 @@ return_type ODriveHardwareInterface::perform_command_mode_switch(
             if (axis.pos_input_enabled_) {
                 RCLCPP_INFO(rclcpp::get_logger("ODriveHardwareInterface"), "Setting %s to position control", info_.joints[i].name.c_str());
                 msg.Control_Mode = CONTROL_MODE_POSITION_CONTROL;
-                msg.Input_Mode = INPUT_MODE_PASSTHROUGH;
-                // msg.Input_Mode = INPUT_MODE_POS_FILTER;
+                // msg.Input_Mode = INPUT_MODE_PASSTHROUGH;
+                msg.Input_Mode = INPUT_MODE_POS_FILTER;
             } else if (axis.vel_input_enabled_) {
                 RCLCPP_INFO(rclcpp::get_logger("ODriveHardwareInterface"), "Setting %s to velocity control", info_.joints[i].name.c_str());
                 msg.Control_Mode = CONTROL_MODE_VELOCITY_CONTROL;
@@ -369,7 +370,7 @@ return_type ODriveHardwareInterface::write(const rclcpp::Time&, const rclcpp::Du
         // Send the CAN message that fits the set of enabled setpoints
         if (axis.pos_input_enabled_) {
             Set_Input_Pos_msg_t msg;
-            msg.Input_Pos = (axis.pos_setpoint_ / (2 * M_PI))/axis.gearing_;
+            msg.Input_Pos = axis.offset_ + (axis.pos_setpoint_ / (2 * M_PI))/axis.gearing_;
             msg.Vel_FF = axis.vel_input_enabled_ ? (axis.vel_setpoint_  / (2 * M_PI)) : 0.0f;
             msg.Torque_FF = axis.torque_input_enabled_ ? axis.torque_setpoint_ : 0.0f;
             axis.send(msg);
@@ -393,12 +394,12 @@ return_type ODriveHardwareInterface::write(const rclcpp::Time&, const rclcpp::Du
 void ODriveHardwareInterface::on_can_msg(const can_frame& frame) {
     for (auto& axis : axes_) {
         if ((frame.can_id >> 5) == axis.node_id_) {
-            axis.on_can_msg(timestamp_, frame,axis.gearing_);
+            axis.on_can_msg(timestamp_, frame,axis.gearing_, axis.offset_);
         }
     }
 }
 
-void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame,double gearing) {
+void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame,double gearing, double offset) {
     uint8_t cmd = frame.can_id & 0x1f;
 
     auto try_decode = [&]<typename TMsg>(TMsg& msg) {
@@ -413,7 +414,7 @@ void Axis::on_can_msg(const rclcpp::Time&, const can_frame& frame,double gearing
     switch (cmd) {
         case Get_Encoder_Estimates_msg_t::cmd_id: {
             if (Get_Encoder_Estimates_msg_t msg; try_decode(msg)) {
-                pos_estimate_ = msg.Pos_Estimate * (2 * M_PI)*gearing;
+                pos_estimate_ = msg.Pos_Estimate * (2 * M_PI)*gearing - offset;
                 vel_estimate_ = msg.Vel_Estimate * (2 * M_PI)*gearing;
             }
         } break;
